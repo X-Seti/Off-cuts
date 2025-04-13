@@ -1,2 +1,4 @@
-Simple little bash scripts, Odds and Ends someone might find useful.
+Someone might find simple little bash scripts, Odds and Ends, useful.
 X-Seti 
+
+Wallpaper-dim.sh -- Run from Crontab or bash.
