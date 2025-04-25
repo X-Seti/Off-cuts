@@ -1,7 +1,7 @@
 Someone might find simple little bash scripts, Odds and Ends, useful.
 X-Seti 
 
-Wallpaper-dim.sh -- Run from Crontab or bash.
+Wallpaper-dim.sh -- Run from Crontab or bash. Dims the wallpaper depending on the time of day. Very dark at midnight.
 
 OrangePi5-hdmi-in-record.sh -- OrangePi5-Plus HDMI in (record and view).
 
