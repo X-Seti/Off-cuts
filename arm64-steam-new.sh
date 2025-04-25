@@ -15,7 +15,7 @@ echo "=== Installing Steam on ARM64 with Box86/Box64 ==="
 
 # Function for error handling
 handle_error() {
-    echo "GURU MEDITATION - ERROR: $1"
+    echo "ERROR: $1"
     exit 1
 }
 
@@ -87,6 +87,71 @@ chmod +x /usr/local/bin/steam || handle_error "Failed to make Steam launcher exe
 echo "=== Installing latest Mesa drivers ==="
 # MESA DRIVERS - MODIFIED TO ADD WITHOUT REMOVING KISAK REPO FIRST
 add-apt-repository -y ppa:oibaf/graphics-drivers || echo "Warning: Failed to add Mesa graphics PPA. Continuing..."
+
+# Function to detect architecture and install the appropriate Box64 package
+detect_and_install_box64() {
+    # Get basic system information
+    ARCH=$(uname -m)
+
+    # Check if we're on ARM64/aarch64
+    if [[ "$ARCH" != "aarch64" ]]; then
+        echo "Error: Not running on ARM64 architecture. Box64 requires ARM64."
+        exit 1
+    fi
+
+    # Try to determine the specific hardware
+    if grep -q "Raspberry Pi 5" /proc/device-tree/model 2>/dev/null; then
+        # Check page size for Pi 5
+        PAGE_SIZE=$(getconf PAGE_SIZE)
+        if [[ "$PAGE_SIZE" -eq 16384 ]]; then
+            PKG="box64-rpi5arm64ps16k box86-rpi5arm64ps16k"
+        else
+            PKG="box64-rpi5arm64 box86-rpi5arm64"
+        fi
+    elif grep -q "Raspberry Pi 4" /proc/device-tree/model 2>/dev/null; then
+        PKG="box64-rpi4arm64 box86-rpi4arm64"
+    elif grep -q "Raspberry Pi 3" /proc/device-tree/model 2>/dev/null; then
+        PKG="box64-rpi3arm64 box86-rpi3arm64"
+    elif grep -q "Tegra X1" /proc/device-tree/compatible 2>/dev/null; then
+        PKG="box64-tegrax1 box86-tegrax1"
+    elif grep -q "Tegra194" /proc/device-tree/compatible 2>/dev/null; then
+        PKG="box64-tegra-t194 box86-tegra-t194"
+    elif grep -q "rockchip,rk3399" /proc/device-tree/compatible 2>/dev/null; then
+        PKG="box64-rk3399 box86-rk3399"
+    elif grep -q "rockchip,rk3588" /proc/device-tree/compatible 2>/dev/null; then
+        PKG="box64-rk3588 box86-rk3588"
+    elif grep -q "apple,m1" /proc/device-tree/compatible 2>/dev/null; then
+        PKG="box64-m1 box86-m1"
+    elif grep -q "lx2160a" /proc/device-tree/compatible 2>/dev/null; then
+        PKG="box64-lx2160a box86-lx2160a"
+    # Check for Snapdragon processors
+    elif grep -q "Snapdragon 888" /proc/cpuinfo 2>/dev/null || grep -q "SM8350" /proc/device-tree/compatible 2>/dev/null; then
+        PKG="box64-sd888 box86-sd888"
+    elif grep -q "Snapdragon X Elite" /proc/cpuinfo 2>/dev/null || grep -q "X1E" /proc/device-tree/compatible 2>/dev/null; then
+        PKG="box64-sdoryon1 box86-sdoryon1"
+    # Check if running on Android
+    elif [[ -d "/system/app" && -d "/system/priv-app" ]]; then
+        PKG="box64-android box86-android"
+    else
+        # Default to generic ARM64 if specific hardware not identified
+        PKG="box64 box86"
+    fi
+
+    echo "Detected system requires: $PKG"
+    echo "Installing $PKG..."
+    sudo apt install -y $PKG
+
+    # Check if installation was successful
+    if [[ $? -eq 0 ]]; then
+        echo "$PKG successfully installed!"
+    else
+        echo "Installation failed. You may need to add the Box64 repository first."
+        echo "Visit https://github.com/ptitSeb/box64 for more information."
+    fi
+}
+
+# Run the detection and installation function
+detect_and_install_box64
 
 echo "=== Installation Complete ==="
 echo "Run 'steam' to launch Steam."
