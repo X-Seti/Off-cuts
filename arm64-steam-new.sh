@@ -15,7 +15,7 @@ echo "=== Installing Steam on ARM64 with Box86/Box64 ==="
 
 # Function for error handling
 handle_error() {
-    echo "ERROR: $1"
+    echo "GURU MEDITATION - ERROR: $1"
     exit 1
 }
 
