@@ -9,6 +9,8 @@ set -e
 
 SCRVERS=0.8
 # Default values
+LOG_FILE=""
+USE_LOG_FILE=false
 RECURSIVE=false
 EXECUTE=false
 MEDIA_EXTENSIONS=("mp4" "mkv" "avi" "mov" "wmv" "flv" "webm" "m4v" "mpg" "mpeg" "ts")
@@ -38,6 +40,7 @@ show_usage() {
     echo "  --ignore-flag=X    Set custom ignore flag file (default: .noconvert)" >&2
     echo "  --verbose          Show verbose output and ffmpeg logs" >&2
     echo "  -v, --version      Show version: "$SCRVERS >&2
+    echo "  -l, --log=FILE     Send output to log file (default: script_output.log)" >&2
     echo "  -h, --help         Show this help message" >&2
     echo "" >&2
     echo "Special Features:" >&2
@@ -85,6 +88,9 @@ if [ "$VERSION" = "true" ]; then
     echo "Script Version=$SCRVERS"
     exit 0
 fi
+
+# Initialize logging if enabled
+log_output "$@"
 
 # Check if JSON file exists
 if [ ! -f "$JSON_FILE" ]; then
@@ -221,6 +227,8 @@ show_preset() {
     echo "============================================"
 }
 
+
+
 # Show preset only if requested
 if [ "$SHOW_PRESET_ONLY" = "true" ]; then
     show_preset
@@ -232,6 +240,28 @@ if [ ! -d "$OUTPUT_DIR" ] && [ "$DRY_RUN" = "false" ]; then
     echo "Creating output directory: $OUTPUT_DIR"
     mkdir -p "$OUTPUT_DIR"
 fi
+
+# Add a function for logging
+log_output() {
+    if [ "$USE_LOG_FILE" = "true" ]; then
+        if [ -z "$LOG_FILE" ]; then
+            LOG_FILE="script_output.log"
+        fi
+
+        # Create the log file if it doesn't exist
+        if [ ! -f "$LOG_FILE" ]; then
+            touch "$LOG_FILE"
+        fi
+
+        # Redirect all output to both console and log file
+        exec > >(tee -a "$LOG_FILE") 2>&1
+
+        echo "=========================================="
+        echo "Log started at $(date)"
+        echo "Command: $0 $*"
+        echo "=========================================="
+    fi
+}
 
 # Function to check if a file should be ignored
 should_ignore_file() {
