@@ -7,7 +7,7 @@
 
 set -e
 
-SCRVERS=0.5
+SCRVERS=0.6
 # Default values
 RECURSIVE=false
 EXECUTE=false
@@ -18,6 +18,7 @@ MEDIA_DIR=""
 OUTPUT_DIR=""
 IGNORE_FLAG=".noconvert"
 FORCE_M4V=false
+REPLACE_UNDERSCORES=false
 
 # Function to display usage
 show_usage() {
@@ -30,6 +31,7 @@ show_usage() {
     echo "  -i, --input-dir    Specify input directory (default: same as JSON file)" >&2
     echo "  -o, --output-dir   Specify output directory (default: input_dir/converted)" >&2
     echo "  -m, --force-m4v    Force output extension to .m4v regardless of container" >&2
+    echo "  -u, --no-underscore-replace  Don't replace underscores with spaces in output filenames" >&2
     echo "  --ignore-flag=X    Set custom ignore flag file (default: .noconvert)" >&2
     echo "  -v, --version      Show version: "$SCRVERS >&2
     echo "  -h, --help         Show this help message" >&2
@@ -37,6 +39,7 @@ show_usage() {
     echo "Special Features:" >&2
     echo "  - Files will be skipped if a '$IGNORE_FLAG' file exists in the same directory" >&2
     echo "  - Use -m/--force-m4v to output all files with .m4v extension" >&2
+    echo "  - By default, underscores in filenames are replaced with spaces" >&2
     exit 1
 }
 
@@ -57,6 +60,7 @@ while [ "$#" -gt 0 ]; do
         -d|--dry-run) DRY_RUN=true ;;
         -p|--show-preset) SHOW_PRESET_ONLY=true ;;
         -m|--force-m4v) FORCE_M4V=true ;;
+        -u|--no-underscore-replace) REPLACE_UNDERSCORES=true ;;
         -i|--input-dir)
             shift
             MEDIA_DIR="$1" ;;
@@ -223,12 +227,21 @@ should_ignore_file() {
     return 1  # False, should not ignore
 }
 
-# Function to build ffmpeg command for a single file
+# Function to format filename (replace underscores with spaces if enabled)
+format_filename() {
+    local basename="$1"
+    if [ "$REPLACE_UNDERSCORES" = "true" ]; then
+        basename="${basename//_/ }"
+    fi
+    echo "$basename"
+}
+
+# Function to safely handle paths and filenames with spaces and special characters
 build_ffmpeg_command() {
     local input_file="$1"
     local output_file="$2"
 
-    # Base command
+    # Base command with proper escaping
     local cmd="ffmpeg -i \"$input_file\" -c:v $FFMPEG_VCODEC $FFMPEG_QUALITY -preset $VIDEO_PRESET"
 
     # Add framerate if specified
@@ -270,7 +283,11 @@ process_file() {
     local output_subdir=$(dirname "$OUTPUT_DIR/$rel_path")
     local filename=$(basename "$input_file")
     local basename="${filename%.*}"
-    local output_file="$output_subdir/$basename.$OUTPUT_FORMAT"
+
+    # Format basename (replace underscores with spaces if enabled)
+    local formatted_basename=$(format_filename "$basename")
+
+    local output_file="$output_subdir/$formatted_basename.$OUTPUT_FORMAT"
 
     # Skip processing the JSON file itself
     if [ "$input_file" = "$(realpath "$JSON_FILE")" ]; then
@@ -309,32 +326,60 @@ process_file() {
     fi
 }
 
-# Build file extension pattern for find command
-extension_pattern=""
-for ext in "${MEDIA_EXTENSIONS[@]}"; do
-    if [ -z "$extension_pattern" ]; then
-        extension_pattern="-name \"*.$ext\""
-    else
-        extension_pattern="$extension_pattern -o -name \"*.$ext\""
+# Function to safely find media files with proper handling of spaces and special characters
+find_media_files() {
+    local directory="$1"
+    local recursive="$2"
+    local result=()
+    local max_depth=""
+
+    if [ "$recursive" = "false" ]; then
+        max_depth="-maxdepth 1"
     fi
-done
+
+    # Build the find command with proper handling of file extensions
+    local find_cmd="find \"$directory\" $max_depth -type f \( "
+    local first=true
+
+    for ext in "${MEDIA_EXTENSIONS[@]}"; do
+        if [ "$first" = "true" ]; then
+            find_cmd="$find_cmd -name \"*.$ext\""
+            first=false
+        else
+            find_cmd="$find_cmd -o -name \"*.$ext\""
+        fi
+    done
+
+    find_cmd="$find_cmd \) -print0"
+
+    # Use a null-delimiter to handle filenames with spaces and special characters
+    while IFS= read -r -d $'\0' file; do
+        echo "$file"
+    done < <(eval "$find_cmd")
+}
 
 # Find and process media files
 echo "Searching for media files in $MEDIA_DIR"
 echo "Files with the '$IGNORE_FLAG' file in their directory will be skipped"
 
+if [ "$REPLACE_UNDERSCORES" = "true" ]; then
+    echo "Underscores in filenames will be replaced with spaces in output files"
+else
+    echo "Output filenames will maintain the same format as input filenames"
+fi
+
 if [ "$RECURSIVE" = "true" ]; then
     echo "Recursive search enabled"
-    media_files=$(eval "find \"$MEDIA_DIR\" -type f \( $extension_pattern \)")
 else
     echo "Non-recursive search"
-    media_files=$(eval "find \"$MEDIA_DIR\" -maxdepth 1 -type f \( $extension_pattern \)")
 fi
 
 # Process each file
 file_count=0
 skipped_count=0
-for file in $media_files; do
+
+# Use null-delimiter to safely handle filenames with spaces and special characters
+while IFS= read -r file; do
     if should_ignore_file "$file"; then
         echo "Skipping: $file (ignore flag found)"
         skipped_count=$((skipped_count + 1))
@@ -342,7 +387,7 @@ for file in $media_files; do
         process_file "$file"
         file_count=$((file_count + 1))
     fi
-done
+done < <(find_media_files "$MEDIA_DIR" "$RECURSIVE")
 
 echo "Processed $file_count files, skipped $skipped_count files"
 
