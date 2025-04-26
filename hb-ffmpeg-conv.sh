@@ -34,7 +34,7 @@ show_usage() {
     echo "  -i, --input-dir    Specify input directory (default: same as JSON file)" >&2
     echo "  -o, --output-dir   Specify output directory (default: input_dir/converted)" >&2
     echo "  -m, --force-m4v    Force output extension to .m4v regardless of container" >&2
-    echo "  -u, --no-underscore-replace  Don't replace underscores with spaces in output filenames" >&2
+    echo "  -u, --no-underscore-replace  Replace underscores with spaces in output filenames" >&2
     echo "  --ignore-flag=X    Set custom ignore flag file (default: .noconvert)" >&2
     echo "  --verbose          Show verbose output and ffmpeg logs" >&2
     echo "  -v, --version      Show version: "$SCRVERS >&2
@@ -520,13 +520,14 @@ error_count=0
 
 # Use null-delimiter to safely handle filenames with spaces and special characters
 while IFS= read -r file; do
+    process_status=0  # Initialize the variable outside the function scope
     if should_ignore_file "$file"; then
         echo "Skipping: $file (ignore flag found)"
         skipped_count=$((skipped_count + 1))
     else
         set +e  # Temporarily disable exit on error
         process_file "$file"
-        local process_status=$?
+        process_status=$?  # Capture return status without 'local'
         set -e  # Re-enable exit on error
 
         if [ $process_status -eq 0 ]; then
