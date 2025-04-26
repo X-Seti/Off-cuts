@@ -7,7 +7,7 @@
 
 set -e
 
-SCRVERS=0.7
+SCRVERS=0.8
 # Default values
 RECURSIVE=false
 EXECUTE=false
@@ -19,6 +19,9 @@ OUTPUT_DIR=""
 IGNORE_FLAG=".noconvert"
 FORCE_M4V=false
 REPLACE_UNDERSCORES=true
+FFMPEG_ANALYZEDURATION=100000000  # 100MB
+FFMPEG_PROBESIZE=100000000        # 100MB
+VERBOSE=false
 
 # Function to display usage
 show_usage() {
@@ -33,6 +36,7 @@ show_usage() {
     echo "  -m, --force-m4v    Force output extension to .m4v regardless of container" >&2
     echo "  -u, --no-underscore-replace  Don't replace underscores with spaces in output filenames" >&2
     echo "  --ignore-flag=X    Set custom ignore flag file (default: .noconvert)" >&2
+    echo "  --verbose          Show verbose output and ffmpeg logs" >&2
     echo "  -v, --version      Show version: "$SCRVERS >&2
     echo "  -h, --help         Show this help message" >&2
     echo "" >&2
@@ -61,6 +65,7 @@ while [ "$#" -gt 0 ]; do
         -p|--show-preset) SHOW_PRESET_ONLY=true ;;
         -m|--force-m4v) FORCE_M4V=true ;;
         -u|--no-underscore-replace) REPLACE_UNDERSCORES=false ;;
+        --verbose) VERBOSE=true ;;
         -i|--input-dir)
             shift
             MEDIA_DIR="$1" ;;
@@ -208,9 +213,11 @@ show_preset() {
     else
         echo "Multipass:        Disabled (single-pass encoding)"
     fi
+    echo "Analyze duration: $FFMPEG_ANALYZEDURATION"
+    echo "Probe size:       $FFMPEG_PROBESIZE"
     echo "============================================"
     echo "Example usage:"
-    echo "ffmpeg -i input.mp4 -c:v $FFMPEG_VCODEC $FFMPEG_QUALITY -preset $VIDEO_PRESET -s ${PICTURE_WIDTH}x${PICTURE_HEIGHT} $FFMPEG_ACODEC $FFMPEG_AUDIO_CHANNELS output.$OUTPUT_FORMAT"
+    echo "ffmpeg -analyzeduration $FFMPEG_ANALYZEDURATION -probesize $FFMPEG_PROBESIZE -i input.mp4 -c:v $FFMPEG_VCODEC $FFMPEG_QUALITY -preset $VIDEO_PRESET -s ${PICTURE_WIDTH}x${PICTURE_HEIGHT} $FFMPEG_ACODEC $FFMPEG_AUDIO_CHANNELS output.$OUTPUT_FORMAT"
     echo "============================================"
 }
 
@@ -244,13 +251,36 @@ format_filename() {
     echo "$basename"
 }
 
+# Function to check if a file exists and is writable
+check_file_access() {
+    local file_path="$1"
+    local dir_path=$(dirname "$file_path")
+
+    if [ ! -d "$dir_path" ]; then
+        echo "Error: Output directory '$dir_path' does not exist."
+        return 1
+    fi
+
+    if [ -f "$file_path" ] && [ ! -w "$file_path" ]; then
+        echo "Error: Output file '$file_path' exists but is not writable."
+        return 1
+    fi
+
+    if [ ! -w "$dir_path" ]; then
+        echo "Error: Output directory '$dir_path' is not writable."
+        return 1
+    fi
+
+    return 0
+}
+
 # Function to safely handle paths and filenames with spaces and special characters
 build_ffmpeg_command() {
     local input_file="$1"
     local output_file="$2"
 
-    # Base command with proper escaping
-    local cmd="ffmpeg -i \"$input_file\" -c:v $FFMPEG_VCODEC $FFMPEG_QUALITY -preset $VIDEO_PRESET"
+    # Base command with proper escaping and extended analysis parameters
+    local cmd="ffmpeg -analyzeduration $FFMPEG_ANALYZEDURATION -probesize $FFMPEG_PROBESIZE -i \"$input_file\" -c:v $FFMPEG_VCODEC $FFMPEG_QUALITY -preset $VIDEO_PRESET"
 
     # Add framerate if specified
     if [ "$VIDEO_FRAMERATE" != "auto" ] && [ -n "$VIDEO_FRAMERATE" ]; then
@@ -267,6 +297,14 @@ build_ffmpeg_command() {
     if [ "$VIDEO_PROFILE" != "auto" ] && [ -n "$VIDEO_PROFILE" ]; then
         cmd="$cmd -profile:v $VIDEO_PROFILE"
     fi
+
+    # Add verbosity level
+    if [ "$VERBOSE" = "false" ]; then
+        cmd="$cmd -v error -stats"
+    fi
+
+    # Always copy all streams from input
+    cmd="$cmd -map 0"
 
     # Add multipass settings
     if [ "$VIDEO_MULTIPASS" = "true" ] && [ "$VIDEO_QUALITY_TYPE" != "2" ]; then
@@ -293,8 +331,25 @@ rename_to_m4v() {
         echo "[DRY RUN] Would rename $file_path to $m4v_path"
     else
         echo "Renaming $file_path to $m4v_path"
-        mv "$file_path" "$m4v_path"
+        if [ -f "$file_path" ]; then
+            mv "$file_path" "$m4v_path"
+            if [ $? -ne 0 ]; then
+                echo "Error renaming file to .m4v"
+                return 1
+            fi
+        else
+            echo "Error: File $file_path not found for renaming"
+            return 1
+        fi
     fi
+    return 0
+}
+
+# Function to get file information
+get_file_info() {
+    local file_path="$1"
+    echo "File information for $file_path:"
+    ffprobe -hide_banner -v error -show_format -show_streams "$file_path"
 }
 
 # Function to process a media file
@@ -341,8 +396,21 @@ process_file() {
         if [ "$DRY_RUN" = "false" ]; then
             echo "Creating output directory: $output_subdir"
             mkdir -p "$output_subdir"
+            if [ $? -ne 0 ]; then
+                echo "Error creating directory: $output_subdir"
+                return 1
+            fi
         else
             echo "[DRY RUN] Would create directory: $output_subdir"
+        fi
+    fi
+
+    # Check if output file location is valid and writable
+    if [ "$DRY_RUN" = "false" ] && [ "$EXECUTE" = "true" ]; then
+        check_file_access "$output_file"
+        if [ $? -ne 0 ]; then
+            echo "Skipping $input_file due to output file access issues."
+            return 1
         fi
     fi
 
@@ -359,11 +427,28 @@ process_file() {
         echo "Processing: $input_file"
         echo "Output: $output_file"
         echo "Command: $ffmpeg_cmd"
-        eval "$ffmpeg_cmd"
 
-        # If successful and force_m4v is enabled, rename to .m4v
-        if [ $? -eq 0 ] && [ "$FORCE_M4V" = "true" ]; then
-            rename_to_m4v "$output_file"
+        # Execute ffmpeg and capture exit status
+        set +e  # Temporarily disable exit on error
+        eval "$ffmpeg_cmd"
+        local ffmpeg_status=$?
+        set -e  # Re-enable exit on error
+
+        if [ $ffmpeg_status -ne 0 ]; then
+            echo "Error: FFmpeg command failed with status $ffmpeg_status"
+            echo "Checking input file..."
+            get_file_info "$input_file"
+            return 1
+        else
+            echo "Conversion successful"
+
+            # If successful and force_m4v is enabled, rename to .m4v
+            if [ "$FORCE_M4V" = "true" ]; then
+                rename_to_m4v "$output_file"
+                if [ $? -ne 0 ]; then
+                    echo "Warning: Failed to rename file to .m4v"
+                fi
+            fi
         fi
     else
         echo "Generated command for $input_file:"
@@ -410,6 +495,7 @@ find_media_files() {
 echo "Searching for media files in $MEDIA_DIR"
 echo "Files with the '$IGNORE_FLAG' file in their directory will be skipped"
 echo "Output directory set to: $OUTPUT_DIR"
+echo "Using analyzeduration: $FFMPEG_ANALYZEDURATION, probesize: $FFMPEG_PROBESIZE"
 
 if [ "$REPLACE_UNDERSCORES" = "true" ]; then
     echo "Underscores in filenames will be replaced with spaces in output files"
@@ -423,9 +509,14 @@ else
     echo "Non-recursive search"
 fi
 
+if [ "$VERBOSE" = "true" ]; then
+    echo "Verbose output enabled"
+fi
+
 # Process each file
 file_count=0
 skipped_count=0
+error_count=0
 
 # Use null-delimiter to safely handle filenames with spaces and special characters
 while IFS= read -r file; do
@@ -433,13 +524,32 @@ while IFS= read -r file; do
         echo "Skipping: $file (ignore flag found)"
         skipped_count=$((skipped_count + 1))
     else
+        set +e  # Temporarily disable exit on error
         process_file "$file"
-        file_count=$((file_count + 1))
+        local process_status=$?
+        set -e  # Re-enable exit on error
+
+        if [ $process_status -eq 0 ]; then
+            file_count=$((file_count + 1))
+        else
+            error_count=$((error_count + 1))
+            echo "Failed to process: $file"
+        fi
     fi
 done < <(find_media_files "$MEDIA_DIR" "$RECURSIVE")
 
-echo "Processed $file_count files, skipped $skipped_count files"
+echo "Processing complete:"
+echo "  - Successfully processed: $file_count files"
+echo "  - Skipped: $skipped_count files"
+echo "  - Failed: $error_count files"
 
-if [ "$file_count" -eq 0 ] && [ "$skipped_count" -eq 0 ]; then
+if [ "$file_count" -eq 0 ] && [ "$skipped_count" -eq 0 ] && [ "$error_count" -eq 0 ]; then
     echo "No media files found in the specified directory."
+fi
+
+# Return non-zero status if errors occurred
+if [ "$error_count" -gt 0 ]; then
+    echo "Warning: Some files failed to process. Check output for details."
+    # Don't exit with error to allow processing to continue
+    # exit 1
 fi
