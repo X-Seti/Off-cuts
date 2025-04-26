@@ -7,7 +7,7 @@
 
 set -e
 
-SCRVERS=0.6
+SCRVERS=0.7
 # Default values
 RECURSIVE=false
 EXECUTE=false
@@ -18,7 +18,7 @@ MEDIA_DIR=""
 OUTPUT_DIR=""
 IGNORE_FLAG=".noconvert"
 FORCE_M4V=false
-REPLACE_UNDERSCORES=false
+REPLACE_UNDERSCORES=true
 
 # Function to display usage
 show_usage() {
@@ -60,7 +60,7 @@ while [ "$#" -gt 0 ]; do
         -d|--dry-run) DRY_RUN=true ;;
         -p|--show-preset) SHOW_PRESET_ONLY=true ;;
         -m|--force-m4v) FORCE_M4V=true ;;
-        -u|--no-underscore-replace) REPLACE_UNDERSCORES=true ;;
+        -u|--no-underscore-replace) REPLACE_UNDERSCORES=false ;;
         -i|--input-dir)
             shift
             MEDIA_DIR="$1" ;;
@@ -97,6 +97,9 @@ if [ -z "$OUTPUT_DIR" ]; then
     OUTPUT_DIR="$MEDIA_DIR/converted"
     echo "Using output directory: $OUTPUT_DIR"
 fi
+
+# Make sure output directory doesn't contain duplicate "converted" subdirectories
+OUTPUT_DIR=$(echo "$OUTPUT_DIR" | sed 's|/converted/converted|/converted|g')
 
 # Check if jq is installed
 if ! command -v jq &> /dev/null; then
@@ -166,8 +169,13 @@ else
     OUTPUT_FORMAT="mkv"  # Default to MKV
 fi
 
-# Override output format if force m4v is enabled
-if [ "$FORCE_M4V" = "true" ]; then
+# Store original format before potentially overriding with force-m4v
+ORIGINAL_FORMAT="$OUTPUT_FORMAT"
+
+# Override output format if force m4v is enabled (we'll handle this specially now)
+if [ "$FORCE_M4V" = "true" ] && [ "$EXECUTE" = "true" ]; then
+    echo "Force m4v is enabled. Files will be converted to $ORIGINAL_FORMAT first, then renamed to .m4v"
+elif [ "$FORCE_M4V" = "true" ]; then
     OUTPUT_FORMAT="m4v"
     echo "Forcing output extension to .m4v"
 fi
@@ -276,18 +284,46 @@ build_ffmpeg_command() {
     echo "$cmd"
 }
 
+# Function to rename a file from original format to m4v
+rename_to_m4v() {
+    local file_path="$1"
+    local m4v_path="${file_path%.*}.m4v"
+
+    if [ "$DRY_RUN" = "true" ]; then
+        echo "[DRY RUN] Would rename $file_path to $m4v_path"
+    else
+        echo "Renaming $file_path to $m4v_path"
+        mv "$file_path" "$m4v_path"
+    fi
+}
+
 # Function to process a media file
 process_file() {
     local input_file="$1"
     local rel_path="${input_file#$MEDIA_DIR/}"
-    local output_subdir=$(dirname "$OUTPUT_DIR/$rel_path")
+
+    # Ensure output subdirectory path is properly constructed
+    local output_subdir="$OUTPUT_DIR"
+    local dir_part=$(dirname "$rel_path")
+
+    if [ "$dir_part" != "." ]; then
+        output_subdir="$OUTPUT_DIR/$dir_part"
+    fi
+
     local filename=$(basename "$input_file")
     local basename="${filename%.*}"
 
     # Format basename (replace underscores with spaces if enabled)
     local formatted_basename=$(format_filename "$basename")
 
-    local output_file="$output_subdir/$formatted_basename.$OUTPUT_FORMAT"
+    # Determine the correct output format for initial conversion
+    local actual_format="$OUTPUT_FORMAT"
+    if [ "$FORCE_M4V" = "true" ] && [ "$EXECUTE" = "true" ]; then
+        # When executing with force_m4v, use original format first
+        actual_format="$ORIGINAL_FORMAT"
+    fi
+
+    local output_file="$output_subdir/$formatted_basename.$actual_format"
 
     # Skip processing the JSON file itself
     if [ "$input_file" = "$(realpath "$JSON_FILE")" ]; then
@@ -303,6 +339,7 @@ process_file() {
     # Create output subdirectory if needed
     if [ ! -d "$output_subdir" ]; then
         if [ "$DRY_RUN" = "false" ]; then
+            echo "Creating output directory: $output_subdir"
             mkdir -p "$output_subdir"
         else
             echo "[DRY RUN] Would create directory: $output_subdir"
@@ -315,14 +352,25 @@ process_file() {
     if [ "$DRY_RUN" = "true" ]; then
         echo "[DRY RUN] Would execute:"
         echo "$ffmpeg_cmd"
+        if [ "$FORCE_M4V" = "true" ]; then
+            echo "[DRY RUN] Would rename $output_file to ${output_file%.*}.m4v"
+        fi
     elif [ "$EXECUTE" = "true" ]; then
         echo "Processing: $input_file"
         echo "Output: $output_file"
         echo "Command: $ffmpeg_cmd"
         eval "$ffmpeg_cmd"
+
+        # If successful and force_m4v is enabled, rename to .m4v
+        if [ $? -eq 0 ] && [ "$FORCE_M4V" = "true" ]; then
+            rename_to_m4v "$output_file"
+        fi
     else
         echo "Generated command for $input_file:"
         echo "$ffmpeg_cmd"
+        if [ "$FORCE_M4V" = "true" ]; then
+            echo "Note: If executed, the file will be converted to $actual_format then renamed to .m4v"
+        fi
     fi
 }
 
@@ -361,6 +409,7 @@ find_media_files() {
 # Find and process media files
 echo "Searching for media files in $MEDIA_DIR"
 echo "Files with the '$IGNORE_FLAG' file in their directory will be skipped"
+echo "Output directory set to: $OUTPUT_DIR"
 
 if [ "$REPLACE_UNDERSCORES" = "true" ]; then
     echo "Underscores in filenames will be replaced with spaces in output files"
