@@ -90,7 +90,7 @@ if [ "$VERSION" = "true" ]; then
 fi
 
 # Initialize logging if enabled
-log_output "$@"
+log_output="$@"
 
 # Check if JSON file exists
 if [ ! -f "$JSON_FILE" ]; then
