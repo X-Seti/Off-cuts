@@ -4,6 +4,9 @@ X-Seti
 
 Wallpaper-dim.sh -- Run from Crontab or bash. Dims the wallpaper depending on the time of day. Very dark at midnight.
 
+clone_packages_universal.sh -- Clone only the packages you installed, on another distro.
+uses rsync over ssh 
+
 plasma-backup-script.sh -- script backup Plasma desktop 5/6, all files, configs and deps.
 
 OrangePi5-hdmi-in-record.sh -- OrangePi5-Plus HDMI in (record and view).
