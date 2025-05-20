@@ -1,8 +1,12 @@
 #!/bin/bash
 
-# Universal Wallpaper Dimming Script - X-Seti
-# Automatically adjusts wallpaper brightness based on time of day
-# Compatible with: KDE Plasma 5, KDE Plasma 6, MATE, GNOME, XFCE, Cinnamon, LXDE/LXQt, i3, Sway, and other desktop environments
+# Enhanced Day/Night System Theme Script X-Seti
+# Automatically adjusts wallpaper brightness and system theme based on time of day
+# Features:
+# - Wallpaper dimming with blue light reduction at night
+# - System theme switching (light/dark mode)
+# - Accent color changes based on time of day
+# Compatible with: KDE Plasma, GNOME, XFCE, Cinnamon, and others
 
 # Enable error tracing
 set -e
@@ -16,8 +20,8 @@ OUTPUT_DIR="${HOME}/Wallpapers/System-Defaults"
 OUTPUT_WALLPAPER="${OUTPUT_DIR}/current-wallpaper.jpg"
 
 # Log file for debugging
-LOG_FILE="/tmp/wallpaper-change.log"
-echo "Starting wallpaper adjustment at $(date)" > "$LOG_FILE"
+LOG_FILE="/tmp/system-theme-change.log"
+echo "Starting system theme adjustment at $(date)" > "$LOG_FILE"
 
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
@@ -33,13 +37,13 @@ fi
 HOUR=$(date +%H)
 echo "Current hour: $HOUR" >> "$LOG_FILE"
 
-# Define brightness levels
+# Define brightness levels, color temperature, and time periods
 declare -A brightness_levels
-brightness_levels[0]=00   # 12am - darkest
-brightness_levels[1]=10
-brightness_levels[2]=20
-brightness_levels[3]=30
-brightness_levels[4]=40
+brightness_levels[0]=30   # 12am - darkest
+brightness_levels[1]=30
+brightness_levels[2]=35
+brightness_levels[3]=40
+brightness_levels[4]=45
 brightness_levels[5]=50
 brightness_levels[6]=60   # 6am - starting to get lighter
 brightness_levels[7]=70
@@ -51,18 +55,66 @@ brightness_levels[12]=100  # 12pm - brightest
 brightness_levels[13]=100
 brightness_levels[14]=95
 brightness_levels[15]=90
-brightness_levels[16]=80
-brightness_levels[17]=70   # 5pm - starting to get darker
-brightness_levels[18]=60
-brightness_levels[19]=50
-brightness_levels[20]=40   # 8pm
-brightness_levels[21]=30
-brightness_levels[22]=20
-brightness_levels[23]=10
+brightness_levels[16]=85
+brightness_levels[17]=80   # 5pm - starting to get darker
+brightness_levels[18]=70
+brightness_levels[19]=60
+brightness_levels[20]=50   # 8pm
+brightness_levels[21]=40
+brightness_levels[22]=35
+brightness_levels[23]=30
+
+# Define time periods for theming
+is_daytime() {
+    if [ "$HOUR" -ge 7 ] && [ "$HOUR" -lt 19 ]; then
+        return 0  # True - it's daytime (7am-7pm)
+    else
+        return 1  # False - it's nighttime
+    fi
+}
+
+# Define color temperature levels (for blue light reduction)
+# Lower values = warmer (more orange/red)
+get_color_temp() {
+    if [ "$HOUR" -ge 19 ] || [ "$HOUR" -lt 6 ]; then
+        # Night (7pm-6am): Warm/orange (reduced blue light)
+        echo "93"  # Significant blue reduction
+    elif [ "$HOUR" -ge 6 ] && [ "$HOUR" -lt 8 ]; then
+        # Early morning (6am-8am): Slightly warm
+        echo "97"  # Slight blue reduction
+    elif [ "$HOUR" -ge 17 ] && [ "$HOUR" -lt 19 ]; then
+        # Evening (5pm-7pm): Slightly warm
+        echo "97"  # Slight blue reduction
+    else
+        # Full daylight (8am-5pm): Normal colors
+        echo "100"  # No color temperature adjustment
+    fi
+}
+
+# Get theme settings based on time
+get_theme_settings() {
+    if is_daytime; then
+        # Daytime theme settings
+        echo "light:#1e88e5"  # Light theme with blue accent
+    else
+        # Nighttime theme settings
+        echo "dark:#ff7043"   # Dark theme with orange accent
+    fi
+}
 
 # Get the brightness level for the current hour
 BRIGHTNESS=${brightness_levels[$HOUR]}
+# Get the color temperature (hue adjustment)
+COLOR_TEMP=$(get_color_temp)
+# Get theme settings
+THEME_SETTINGS=$(get_theme_settings)
+THEME_MODE=$(echo $THEME_SETTINGS | cut -d':' -f1)
+ACCENT_COLOR=$(echo $THEME_SETTINGS | cut -d':' -f2)
+
 echo "Selected brightness: $BRIGHTNESS%" >> "$LOG_FILE"
+echo "Selected color temperature: $COLOR_TEMP%" >> "$LOG_FILE"
+echo "Theme mode: $THEME_MODE" >> "$LOG_FILE"
+echo "Accent color: $ACCENT_COLOR" >> "$LOG_FILE"
 
 # Check if ImageMagick is installed
 if ! command -v convert &> /dev/null; then
@@ -73,12 +125,10 @@ if ! command -v convert &> /dev/null; then
     exit 1
 fi
 
-# Use ImageMagick to adjust the brightness
+# Use ImageMagick to adjust the brightness and color temperature
 echo "Creating adjusted wallpaper..." >> "$LOG_FILE"
-SATURATION=$((BRIGHTNESS + 10))
-if [ $SATURATION -gt 100 ]; then SATURATION=100; fi
+convert "$BASE_WALLPAPER" -modulate $BRIGHTNESS,100,$COLOR_TEMP "$OUTPUT_WALLPAPER" 2>> "$LOG_FILE"
 
-convert "$BASE_WALLPAPER" -modulate $BRIGHTNESS,$SATURATION,100 "$OUTPUT_WALLPAPER"
 # Check if the adjusted wallpaper was created successfully
 if [ ! -f "$OUTPUT_WALLPAPER" ]; then
     echo "ERROR: Failed to create adjusted wallpaper" | tee -a "$LOG_FILE"
@@ -126,6 +176,121 @@ detect_desktop_environment() {
 # Get the desktop environment
 DESKTOP_ENV=$(detect_desktop_environment)
 echo "Detected desktop environment: $DESKTOP_ENV" | tee -a "$LOG_FILE"
+
+# Function to set theme in KDE Plasma
+set_kde_theme() {
+    echo "Setting theme for KDE Plasma..." >> "$LOG_FILE"
+
+    if [ "$THEME_MODE" = "dark" ]; then
+        PLASMA_THEME="breeze-dark"
+        COLOR_SCHEME="BreezeDark"
+    else
+        PLASMA_THEME="breeze-light"
+        COLOR_SCHEME="BreezeLight"
+    fi
+
+    # Try to set Plasma theme
+    if command -v lookandfeeltool &> /dev/null; then
+        echo "Setting global theme using lookandfeeltool..." >> "$LOG_FILE"
+        if [ "$THEME_MODE" = "dark" ]; then
+            lookandfeeltool -a org.kde.breezedark.desktop >> "$LOG_FILE" 2>&1
+        else
+            lookandfeeltool -a org.kde.breeze.desktop >> "$LOG_FILE" 2>&1
+        fi
+    fi
+
+    # Set color scheme
+    if command -v kwriteconfig5 &> /dev/null; then
+        echo "Setting color scheme using kwriteconfig5..." >> "$LOG_FILE"
+        kwriteconfig5 --file kdeglobals --group General --key ColorScheme "$COLOR_SCHEME"
+        # Set accent color
+        kwriteconfig5 --file kdeglobals --group General --key AccentColor "$ACCENT_COLOR"
+    elif command -v kwriteconfig6 &> /dev/null; then
+        echo "Setting color scheme using kwriteconfig6..." >> "$LOG_FILE"
+        kwriteconfig6 --file kdeglobals --group General --key ColorScheme "$COLOR_SCHEME"
+        # Set accent color
+        kwriteconfig6 --file kdeglobals --group General --key AccentColor "$ACCENT_COLOR"
+    fi
+
+    # Reload KDE configuration
+    if command -v qdbus &> /dev/null; then
+        qdbus org.kde.KWin /KWin reconfigure >> "$LOG_FILE" 2>&1
+        qdbus org.kde.plasmashell /PlasmaShell refreshCurrentDesktop >> "$LOG_FILE" 2>&1
+    fi
+
+    return 0
+}
+
+# Function to set theme in GNOME
+set_gnome_theme() {
+    echo "Setting theme for GNOME..." >> "$LOG_FILE"
+
+    if command -v gsettings &> /dev/null; then
+        # Set light/dark preference
+        if [ "$THEME_MODE" = "dark" ]; then
+            gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
+            gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita-dark'
+        else
+            gsettings set org.gnome.desktop.interface color-scheme 'prefer-light'
+            gsettings set org.gnome.desktop.interface gtk-theme 'Adwaita'
+        fi
+
+        # Try to set accent color if supported (GNOME 42+)
+        if gsettings list-keys org.gnome.desktop.interface | grep -q 'accent-color'; then
+            # Convert hex to GNOME format (removing # and adding alpha)
+            GNOME_ACCENT="${ACCENT_COLOR/#\#/}"
+            gsettings set org.gnome.desktop.interface accent-color "'$GNOME_ACCENT'"
+        fi
+
+        echo "Set GNOME appearance settings" >> "$LOG_FILE"
+        return 0
+    else
+        echo "Failed to set GNOME theme: gsettings not found" | tee -a "$LOG_FILE"
+        return 1
+    fi
+}
+
+# Function to set theme in XFCE
+set_xfce_theme() {
+    echo "Setting theme for XFCE..." >> "$LOG_FILE"
+
+    if command -v xfconf-query &> /dev/null; then
+        if [ "$THEME_MODE" = "dark" ]; then
+            xfconf-query -c xsettings -p /Net/ThemeName -s "Adwaita-dark"
+            xfconf-query -c xsettings -p /Net/IconThemeName -s "Adwaita-dark"
+        else
+            xfconf-query -c xsettings -p /Net/ThemeName -s "Adwaita"
+            xfconf-query -c xsettings -p /Net/IconThemeName -s "Adwaita"
+        fi
+        echo "Set XFCE theme settings" >> "$LOG_FILE"
+        return 0
+    else
+        echo "Failed to set XFCE theme: xfconf-query not found" | tee -a "$LOG_FILE"
+        return 1
+    fi
+}
+
+# Function to set theme in Cinnamon
+set_cinnamon_theme() {
+    echo "Setting theme for Cinnamon..." >> "$LOG_FILE"
+
+    if command -v gsettings &> /dev/null; then
+        if [ "$THEME_MODE" = "dark" ]; then
+            gsettings set org.cinnamon.desktop.interface gtk-theme 'Mint-Y-Dark'
+            gsettings set org.cinnamon.desktop.wm.preferences theme 'Mint-Y-Dark'
+            gsettings set org.cinnamon.theme name 'Mint-Y-Dark'
+        else
+            gsettings set org.cinnamon.desktop.interface gtk-theme 'Mint-Y'
+            gsettings set org.cinnamon.desktop.wm.preferences theme 'Mint-Y'
+            gsettings set org.cinnamon.theme name 'Mint-Y'
+        fi
+        echo "Set Cinnamon theme settings" >> "$LOG_FILE"
+        return 0
+    else
+        echo "Failed to set Cinnamon theme: gsettings not found" | tee -a "$LOG_FILE"
+        return 1
+    fi
+}
 
 # Function to set wallpaper in KDE Plasma (works for both 5 and 6)
 set_kde_wallpaper() {
@@ -378,53 +543,83 @@ set_generic_wallpaper() {
     return 1
 }
 
-# Set wallpaper based on detected desktop environment
-success=false
+# Apply wallpaper based on detected desktop environment
+wallpaper_success=false
 
 case "$DESKTOP_ENV" in
     *KDE*|*PLASMA*)
-        set_kde_wallpaper && success=true
+        set_kde_wallpaper && wallpaper_success=true
         ;;
     *MATE*)
-        set_mate_wallpaper && success=true
+        set_mate_wallpaper && wallpaper_success=true
         ;;
     *GNOME*)
-        set_gnome_wallpaper && success=true
+        set_gnome_wallpaper && wallpaper_success=true
         ;;
     *XFCE*)
-        set_xfce_wallpaper && success=true
+        set_xfce_wallpaper && wallpaper_success=true
         ;;
     *CINNAMON*)
-        set_cinnamon_wallpaper && success=true
+        set_cinnamon_wallpaper && wallpaper_success=true
         ;;
     *LXDE*)
-        set_lxde_wallpaper && success=true
+        set_lxde_wallpaper && wallpaper_success=true
         ;;
     *LXQT*)
-        set_lxqt_wallpaper && success=true
+        set_lxqt_wallpaper && wallpaper_success=true
         ;;
     *I3*|*SWAY*)
-        set_i3_sway_wallpaper && success=true
+        set_i3_sway_wallpaper && wallpaper_success=true
         ;;
     *)
-        echo "Unknown desktop environment. Trying generic methods..." | tee -a "$LOG_FILE"
-        set_generic_wallpaper && success=true
+        echo "Unknown desktop environment. Trying generic wallpaper methods..." | tee -a "$LOG_FILE"
+        set_generic_wallpaper && wallpaper_success=true
         ;;
 esac
 
 # If all DE-specific methods failed, try generic methods
-if [ "$success" != "true" ]; then
-    echo "Desktop-specific method failed. Trying generic methods..." | tee -a "$LOG_FILE"
-    set_generic_wallpaper && success=true
+if [ "$wallpaper_success" != "true" ]; then
+    echo "Desktop-specific wallpaper method failed. Trying generic methods..." | tee -a "$LOG_FILE"
+    set_generic_wallpaper && wallpaper_success=true
 fi
 
-if [ "$success" = "true" ]; then
-    echo "Wallpaper brightness adjusted to $BRIGHTNESS% for hour $HOUR" | tee -a "$LOG_FILE"
-    echo "Wallpaper set successfully!" | tee -a "$LOG_FILE"
+# Apply theme based on detected desktop environment
+theme_success=false
+
+case "$DESKTOP_ENV" in
+    *KDE*|*PLASMA*)
+        set_kde_theme && theme_success=true
+        ;;
+    *GNOME*)
+        set_gnome_theme && theme_success=true
+        ;;
+    *XFCE*)
+        set_xfce_theme && theme_success=true
+        ;;
+    *CINNAMON*)
+        set_cinnamon_theme && theme_success=true
+        ;;
+    *)
+        echo "Theme switching not implemented for $DESKTOP_ENV" | tee -a "$LOG_FILE"
+        theme_success=false
+        ;;
+esac
+
+# Report success
+echo "Summary of changes:" | tee -a "$LOG_FILE"
+echo "-------------------" | tee -a "$LOG_FILE"
+
+if [ "$wallpaper_success" = "true" ]; then
+    echo "✓ Wallpaper brightness adjusted to $BRIGHTNESS% for hour $HOUR" | tee -a "$LOG_FILE"
+    echo "✓ Blue light reduction set to $COLOR_TEMP%" | tee -a "$LOG_FILE"
 else
-    echo "Failed to set wallpaper on your desktop environment." | tee -a "$LOG_FILE"
-    echo "Please check $LOG_FILE for detailed logs."
-    exit 1
+    echo "✗ Failed to set wallpaper on your desktop environment" | tee -a "$LOG_FILE"
+fi
+
+if [ "$theme_success" = "true" ]; then
+    echo "✓ System theme set to $THEME_MODE mode with $ACCENT_COLOR accent" | tee -a "$LOG_FILE"
+else
+    echo "✗ Theme switching not supported for your desktop environment" | tee -a "$LOG_FILE"
 fi
 
 echo "Check $LOG_FILE for detailed logs"
