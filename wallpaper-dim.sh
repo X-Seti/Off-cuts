@@ -35,30 +35,30 @@ echo "Current hour: $HOUR" >> "$LOG_FILE"
 
 # Define brightness levels
 declare -A brightness_levels
-brightness_levels[0]=20   # 12am - darkest
-brightness_levels[1]=30
-brightness_levels[2]=35
-brightness_levels[3]=40
-brightness_levels[4]=45
+brightness_levels[0]=00   # 12am - darkest
+brightness_levels[1]=10
+brightness_levels[2]=20
+brightness_levels[3]=30
+brightness_levels[4]=40
 brightness_levels[5]=50
 brightness_levels[6]=60   # 6am - starting to get lighter
 brightness_levels[7]=70
 brightness_levels[8]=80
-brightness_levels[9]=85
-brightness_levels[10]=90
-brightness_levels[11]=95
+brightness_levels[9]=90
+brightness_levels[10]=95
+brightness_levels[11]=100
 brightness_levels[12]=100  # 12pm - brightest
 brightness_levels[13]=100
 brightness_levels[14]=95
 brightness_levels[15]=90
-brightness_levels[16]=85
-brightness_levels[17]=80   # 5pm - starting to get darker
-brightness_levels[18]=70
-brightness_levels[19]=60
-brightness_levels[20]=50   # 8pm
-brightness_levels[21]=40
-brightness_levels[22]=30
-brightness_levels[23]=25
+brightness_levels[16]=80
+brightness_levels[17]=70   # 5pm - starting to get darker
+brightness_levels[18]=60
+brightness_levels[19]=50
+brightness_levels[20]=40   # 8pm
+brightness_levels[21]=30
+brightness_levels[22]=20
+brightness_levels[23]=10
 
 # Get the brightness level for the current hour
 BRIGHTNESS=${brightness_levels[$HOUR]}
@@ -75,8 +75,10 @@ fi
 
 # Use ImageMagick to adjust the brightness
 echo "Creating adjusted wallpaper..." >> "$LOG_FILE"
-convert "$BASE_WALLPAPER" -modulate 100,$BRIGHTNESS,100 "$OUTPUT_WALLPAPER" 2>> "$LOG_FILE"
+SATURATION=$((BRIGHTNESS + 10))
+if [ $SATURATION -gt 100 ]; then SATURATION=100; fi
 
+convert "$BASE_WALLPAPER" -modulate $BRIGHTNESS,$SATURATION,100 "$OUTPUT_WALLPAPER"
 # Check if the adjusted wallpaper was created successfully
 if [ ! -f "$OUTPUT_WALLPAPER" ]; then
     echo "ERROR: Failed to create adjusted wallpaper" | tee -a "$LOG_FILE"
